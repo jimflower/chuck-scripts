@@ -1,115 +1,127 @@
 #!/usr/bin/env bash
-# Chuck Scripts — NetworkChuck-style launcher for 40 tools (Debian/Ubuntu/RPi OS)
-# (*) shows if the main binary looks installed.
+# Chuck Scripts — verbose launcher for the video’s tools (Debian/Ubuntu/RPi OS)
 set -euo pipefail
 
-# Package helpers -------------------------------------------------------------
 PKG_REFRESH="sudo apt-get update -y"
 PKG_INSTALL="sudo apt-get install -y"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 pkg_install() {
-  local pkgs="$1" notes="${2:-}"
+  local pkgs="${1:-}" notes="${2:-}"
+  if [[ -z "$pkgs" ]]; then
+    echo "[INFO] Nothing to install (coreutils/manual or already present)."
+    [[ -n "$notes" ]] && echo "$notes"
+    return 0
+  fi
   if [[ "$pkgs" == "(manual)" ]]; then
-    echo "[MANUAL INSTALL]" ; echo "$notes"
+    echo "[MANUAL INSTALL]" ; [[ -n "$notes" ]] && echo "$notes"
     return 0
   fi
   echo "[INFO] Installing: $pkgs"
   $PKG_REFRESH >/dev/null || true
   if ! $PKG_INSTALL $pkgs; then
     echo
-    echo "[WARN] apt install failed. Notes:"
-    [[ -n "$notes" ]] && echo "$notes"
+    echo "[WARN] apt install failed."
+    [[ -n "$notes" ]] && echo "Notes: $notes"
   fi
 }
 
-# Catalog (cmd|apt-pkgs|example|description|notes)
-# Debian naming quirks handled in examples (e.g., fd->fdfind, vipe from moreutils).
-read -r -d '' CATALOG <<'EOF'
-ncdu|ncdu|ncdu /|TUI disk usage explorer.||
-duff|duff|duff -r .|Find duplicate files by content (hash).||
-ripgrep (rg)|ripgrep|rg -n "pattern" .|Blazing-fast grep replacement.||
-mosh|mosh|mosh user@host|Roaming SSH shell over UDP; resilient latency/loss.||
-lshw|lshw|sudo lshw -short|Hardware lister (devices/slots/mem).||
-mtr|mtr-tiny mtr|mtr -rw 1.1.1.1|Live ping+traceroute combo.||
-fd (fdfind)|fd-find|fdfind README|Fast, friendly find (Debian binary is fdfind).||
-fzf|fzf|fzf --help|Fuzzy finder for files/commands/history.||
-ranger|ranger|ranger .|Lightning TUI file manager.||
-zoxide (z)|zoxide|z foo|Smart cd/jump to frequently used dirs.||
-exa (use eza)|eza|eza -la|Modern ls (exa successor; package is eza).||
-glances|glances|glances|All-in-one live system monitor.||
-iotop|iotop|sudo iotop -oPa|Show top disk I/O by process.||
-stat (coreutils)||stat -c "%n %s bytes %y" /bin/bash|File metadata details (mtime/size/perm).|Coreutils; already present.
-dstat|dstat|dstat -cdnm --top-io --top-mem|Versatile vmstat/iostat/ifstat replacement.||
-watch|procps|watch -n 1 'ip -br link'|Rerun a command on an interval.||
-progress|progress|watch -n1 progress -w|See cp/mv/dd progress from other processes.||
-dig|dnsutils|dig A example.com|Classic DNS query client.||
-dog|(manual)|dog example.com|Modern ‘dig’ alternative with DoH/DoT.|Debian: use Snap → sudo apt-get install -y snapd && sudo snap install dog
-tcpdump|tcpdump|sudo tcpdump -ni any -c 50|CLI packet capture (pcap).||
-tshark|tshark|sudo tshark -i any -c 50|Wireshark CLI engine.||
-termshark|termshark|termshark -r file.pcap|TUI Wireshark-like UI (needs tshark).|If apt not available: Go install → go install github.com/gcla/termshark/v2/cmd/termshark@latest
-lsof|lsof|sudo lsof -iTCP -sTCP:LISTEN|List open files / sockets.||
-ipcalc|ipcalc|ipcalc 10.2.4.163/28|Subnet math helper (CIDR, range, bcast).||
-wormhole|magic-wormhole|wormhole send file.zip|Magically send files P2P with short codes.||
-systemd-analyze blame|systemd|systemd-analyze blame|Boot time per service (slowest first).||
-systemd-analyze critical-chain|systemd|systemd-analyze critical-chain|Boot dependency chain timings.||
-ps|procps|ps aux --sort=-%cpu | head|Process list (classic).||
-procs|procs|procs --watch|Colorful modern ps with grouping.||
-lazydocker|(manual)|lazydocker|TUI for Docker (requires Docker).|Install: curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
-rsync|rsync|rsync -av --progress src/ dest/|Rock-solid file sync/copy (SSH too).||
-rm (coreutils)||rm -i file|Remove files; -i prompts (safer).|Coreutils; already present. Use carefully.
-shred (coreutils)||shred -n 3 -vz file|Overwrite to securely remove data.|Coreutils; already present. SSD caveats apply.
-moreutils|moreutils|ts '%.T' < /var/log/syslog | head|Toolkit providing ts, errno, ifdata, vidir, vipe, sponge…||
-ts (moreutils)|moreutils|seq 3 | ts|Timestamp each input line.||
-errno (moreutils)|moreutils|errno 111|Explain errno codes.||
-ifdata (moreutils)|moreutils|ifdata -p -i eth0 ipaddr|Quick iface info without parsing ifconfig.||
-vidir (moreutils)|moreutils|vidir .|Edit filenames in $EDITOR (bulk rename).||
-vipe (moreutils)|moreutils|echo "hello" | vipe | tee out.txt|Drop your editor into a pipeline.||
-unp|unp|unp archive.zip|Extract archives of many types with one command.||
-jq|jq|jq '.' file.json|Swiss-army JSON processor.||
-taskwarrior|taskwarrior|task add "demo" && task next|CLI GTD/task manager.||
-asciinema|asciinema|asciinema rec|Record and share terminal sessions.||
-fabric (fab)|python3-fabric|fab -V|Python remote exec library/CLI.||
-ollama|(manual)|ollama run llama3:8b|Local LLM runner/manager.|Install: curl -fsSL https://ollama.com/install.sh | sh
+# ---- Catalog: cmd|apt-pkgs|example|SHORT description shown in menu|LONG notes ----
+CATALOG="$(cat <<'EOF'
+ncdu|ncdu|ncdu /|Interactive disk usage explorer; delete junk safely.|
+duff|duff|duff -r .|Find duplicate files by content checksums.|
+ripgrep (rg)|ripgrep|rg -n "pattern" .|Lightning-fast code search; respects .gitignore.|
+mosh|mosh|mosh user@host|Roaming SSH over UDP; survives flaky Wi-Fi/roaming.|
+lshw|lshw|sudo lshw -short|Hardware inventory: CPU/RAM/bus/NIC/storage.|
+mtr|mtr-tiny mtr|mtr -rw 1.1.1.1|Live traceroute+ping to spot loss/jitter.|
+fd (fdfind)|fd-find|fdfind README|Friendly, fast find; respects .gitignore.|
+fzf|fzf|fzf --help|Fuzzy-find anything; glue for git/rg/history.|
+ranger|ranger|ranger .|Fast TUI file manager with previews/bulk ops.|
+zoxide (z)|zoxide|z foo|Smart cd; jump to frecent dirs across projects.|
+exa (use eza)|eza|eza -la|Modern ls (colors/icons/tree/git).|
+glances|glances|glances|All-in-one live system monitor (CPU/Mem/Disk/Net).|
+iotop|iotop|sudo iotop -oPa|Show top disk I/O by process.|
+stat (coreutils)||stat -c "%n %s %y" /bin/bash|File timestamps/size/perm/inode.|
+dstat|dstat|dstat -cdnm --top-io --top-mem|Unified CPU/disk/net/mem stats.|
+watch|procps|watch -n 1 'ip -br link'|Repeat a command; see changes live.|
+progress|progress|watch -n1 progress -w|Show cp/mv/dd progress from /proc.|
+dig|dnsutils|dig A example.com|Classic DNS queries; granular control.|
+dog|(manual)|dog example.com|Modern dig with DoH/DoT + color.|Snap: sudo apt -y install snapd && sudo snap install dog
+tcpdump|tcpdump|sudo tcpdump -ni any -c 50|Packet capture/filter; write pcaps.|
+tshark|tshark|sudo tshark -i any -c 50|Wireshark CLI analyzer/decoder.|
+termshark|termshark|termshark -r file.pcap|TUI Wireshark; inspect pcaps in ncurses.|If apt missing: go install github.com/gcla/termshark/v2/cmd/termshark@latest
+lsof|lsof|sudo lsof -iTCP -sTCP:LISTEN|Which process holds a file/port?|
+ipcalc|ipcalc|ipcalc 10.2.4.163/28|CIDR math: mask, range, broadcast.|
+wormhole|magic-wormhole|wormhole send file.zip|P2P file/message send via codes.|
+systemd-analyze blame|systemd|systemd-analyze blame|Boot services ordered by time.|
+systemd-analyze critical-chain|systemd|systemd-analyze critical-chain|Boot critical path dependencies.|
+ps|procps|ps aux --sort=-%cpu | head|Classic process snapshot/sorting.|
+procs|procs|procs --watch|Modern ps with colors/tree/CPU graphs.|
+lazydocker|(manual)|lazydocker|TUI for Docker: containers/images/logs/exec.|Install: curl -fsSL https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/install_update_linux.sh | bash
+rsync|rsync|rsync -av --progress src/ dest/|Fast incremental sync (local/SSH).|
+rm (coreutils)||rm -i file|Remove files; -i prompts (safer).|
+shred (coreutils)||shred -n 3 -vz file|Overwrite file to hinder recovery (HDDs).|
+moreutils|moreutils|ts '%.T' < /var/log/syslog | head|Toolkit: ts/errno/ifdata/vidir/vipe/sponge…|
+ts (moreutils)|moreutils|seq 3 | ts|Timestamp each input line.|
+errno (moreutils)|moreutils|errno 111|Explain errno numbers/names.|
+ifdata (moreutils)|moreutils|ifdata -p -i eth0 ipaddr|Single-field interface info.|
+vidir (moreutils)|moreutils|vidir .|Bulk rename by editing in \$EDITOR.|
+vipe (moreutils)|moreutils|echo hi | vipe | tee out.txt|Edit stdin mid-pipeline in \$EDITOR.|
+unp|unp|unp archive.zip|Extract almost any archive easily.|
+jq|jq|jq '.' file.json|Transform/query JSON with filters.|
+taskwarrior|taskwarrior|task add demo && task next|CLI task manager (tags/proj/dates).|
+asciinema|asciinema|asciinema rec|Record/share terminal sessions as text.|
+fabric (fab)|python3-fabric|fab -V|Pythonic SSH automation (run/put/get).|
+ollama|(manual)|ollama run llama3:8b|Run LLMs locally; pull/start models.|Install: curl -fsSL https://ollama.com/install.sh | sh
 EOF
+)"
 
-# Parse catalog ---------------------------------------------------------------
-IFS=$'\n' read -r -d '' -a LINES <<<"$CATALOG"$'\n'
+# Parse catalog
+mapfile -t LINES <<<"$CATALOG"
 CMDS=(); PKGS=(); EXAMPLES=(); DESCS=(); NOTES=()
 for line in "${LINES[@]}"; do
   [[ -z "$line" ]] && continue
   IFS='|' read -r cmd pkgs ex desc notes <<<"$line"
-  CMDS+=("$cmd"); PKGS+=("${pkgs:-}"); EXAMPLES+=("${ex:-}"); DESCS+=("${desc:-}"); NOTES+=("${notes:-}")
+  CMDS+=("$cmd"); PKGS+=("${pkgs:-}"); EXAMPLES+=("${ex:-}")
+  DESCS+=("${desc:-}"); NOTES+=("${notes:-}")
 done
 
-# Menu UI ---------------------------------------------------------------------
+# Helpers for menu rendering
 bin_hint() {
   local cmd="$1"
   case "$cmd" in
-    "fd (fdfind)") echo "fdfind";;
-    "exa (use eza)") echo "eza";;
-    "ts (moreutils)"|"errno (moreutils)"|"ifdata (moreutils)"|"vidir (moreutils)"|"vipe (moreutils)") echo "${cmd%% *}";;
-    "systemd-analyze blame"|"systemd-analyze critical-chain") echo "systemd-analyze";;
-    "fabric (fab)") echo "fab";;
-    *) echo "${cmd%% *}";;
+    "fd (fdfind)") echo "fdfind" ;;
+    "exa (use eza)") echo "eza" ;;
+    "ts (moreutils)"|"errno (moreutils)"|"ifdata (moreutils)"|"vidir (moreutils)"|"vipe (moreutils)")
+      echo "${cmd%% *}" ;;
+    "systemd-analyze blame"|"systemd-analyze critical-chain")
+      echo "systemd-analyze" ;;
+    "fabric (fab)") echo "fab" ;;
+    *) echo "${cmd%% *}" ;;
   esac
+}
+shorten() {  # shorten "text" to N chars
+  local s="$1" n="${2:-72}"
+  (( ${#s} <= n )) && { printf "%s" "$s"; return; }
+  printf "%s…" "${s:0:n}"
 }
 
 show_menu() {
   clear
   echo "=== Chuck Scripts ==="
-  echo "40 handy commands from the video (Debian-friendly)"
+  echo "Commands from the video (Debian/RPi friendly)"
   echo
   for i in "${!CMDS[@]}"; do
     num=$((i+1))
     hint="$(bin_hint "${CMDS[$i]}")"
     mark=""; have "$hint" && mark="*"
-    printf "%2d) %-28s %s\n" "$num" "${CMDS[$i]}" "$mark"
+    printf "%2d) %-22s %s — %s\n" \
+      "$num" "${CMDS[$i]}" "$mark" "$(shorten "${DESCS[$i]}" 70)"
   done
-  echo " I) Install bulk (safe apt set)"
-  echo " Q) Quit"
   echo
-  echo "(*) installed binary detected"
+  echo " I) Bulk install (apt-set)   Q) Quit"
+  echo
+  echo "(*) installed; select a number for full details/examples"
   echo
 }
 
@@ -126,8 +138,7 @@ detail() {
   echo "$desc"
   [[ -n "$notes" ]] && { echo; echo "Notes:"; echo "  $notes"; }
   echo
-  [[ -n "$pkgs" ]] && echo "Apt packages: $pkgs"
-  [[ -z "$pkgs" ]] && echo "Apt packages: (coreutils/installed base or manual tool)"
+  echo "Apt packages: ${pkgs:-(coreutils/manual)}"
   [[ -n "$ex" ]] && { echo "Example:"; echo "  $ex"; }
   echo
   echo "[I] Install   [R] Run example   [B] Back"
@@ -142,8 +153,6 @@ detail() {
 bulk_install() {
   clear
   echo "== Bulk apt install =="
-  echo "Installs most items that actually exist in Debian repos."
-  echo
   local SET="ncdu duff ripgrep mosh lshw mtr-tiny fd-find fzf ranger zoxide eza glances iotop dstat procps progress dnsutils tcpdump tshark termshark lsof ipcalc magic-wormhole systemd procs rsync moreutils unp jq taskwarrior asciinema python3-fabric"
   echo "$SET" | fmt -w 80
   echo
@@ -151,25 +160,20 @@ bulk_install() {
   [[ "${y,,}" == "y" ]] || return 0
   pkg_install "$SET"
   echo
-  echo "[Notes] manual installs:"
-  echo "  dog → snapd + 'sudo snap install dog'"
+  echo "[Manual installs to consider later:]"
+  echo "  dog  → snapd + 'sudo snap install dog'"
   echo "  lazydocker → upstream install script"
   echo "  ollama → curl | sh from ollama.com"
   read -rp "Enter to continue..."
 }
 
-# Main loop -------------------------------------------------------------------
+# Main loop
 while :; do
   show_menu
   read -rp "Select number, I, or Q: " sel
   case "${sel^^}" in
     Q) exit 0 ;;
     I) bulk_install ;;
-    *)
-      if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel>=1 && sel<=${#CMDS[@]} )); then
-        detail $((sel-1))
-      fi
-      ;;
+    *) if [[ "$sel" =~ ^[0-9]+$ ]] && (( sel>=1 && sel<=${#CMDS[@]} )); then detail $((sel-1)); fi ;;
   esac
 done
-
